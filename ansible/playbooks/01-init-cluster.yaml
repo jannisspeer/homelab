@@ -14,7 +14,7 @@
           --pod-network-cidr={{ pod_network_cidr }} \
           --service-cidr={{ service_cidr }} \
           --apiserver-advertise-address={{ ansible_host }} \
-          --control-plane-endpoint="{{ hostvars[groups['control_plane'][0]]['ansible_host'] }}:6443" \
+          --control-plane-endpoint="{{ groups['control_plane'][0] }}.local:6443" \
           --upload-certs
       when: not kubeadm_initialized.stat.exists and inventory_hostname == groups['control_plane'][0]
       register: kubeadm_init
@@ -129,34 +129,31 @@
       when: inventory_hostname == groups['control_plane'][0]
       ignore_errors: true
 
-    - name: Clean up join command on first node
-      file:
-        path: /tmp/kubeadm_join_cp_command.sh
-        state: absent
-      when: inventory_hostname == groups['control_plane'][0]
 
 - name: Join additional control plane nodes
   hosts: control_plane
   become: true
   tasks:
-    - name: Check if node is already joined
-      stat:
-        path: /etc/kubernetes/kubelet.conf
-      register: kubelet_conf
+    - name: Check if node is already in cluster
+      shell: kubectl get nodes --kubeconfig=/etc/kubernetes/admin.conf 2>/dev/null | grep -q "{{ inventory_hostname }}"
+      register: node_in_cluster
+      failed_when: false
+      changed_when: false
+      when: inventory_hostname != groups['control_plane'][0]
 
     - name: Copy control plane join command to additional nodes
       copy:
         src: /tmp/kubeadm_join_cp_command.sh
         dest: /tmp/kubeadm_join_cp_command.sh
         mode: 0755
-      when: not kubelet_conf.stat.exists and inventory_hostname != groups['control_plane'][0]
+      when: inventory_hostname != groups['control_plane'][0] and node_in_cluster.rc != 0
 
     - name: Join additional control plane nodes to cluster
       shell: /tmp/kubeadm_join_cp_command.sh
-      when: not kubelet_conf.stat.exists and inventory_hostname != groups['control_plane'][0]
+      when: inventory_hostname != groups['control_plane'][0] and node_in_cluster.rc != 0
       register: join_result
-      retries: 5
-      delay: 10
+      delay: 600
+      retries: 0
       until: join_result.rc == 0
 
     - name: Ensure kubelet is running on joined nodes
@@ -207,6 +204,13 @@
         path: /tmp/kubeadm_join_cp_command.sh
         state: absent
       when: inventory_hostname != groups['control_plane'][0]
+
+    - name: Clean up join command on first node
+      file:
+        path: /tmp/kubeadm_join_cp_command.sh
+        state: absent
+      when: inventory_hostname == groups['control_plane'][0]
+      run_once: true
 
 - name: Remove control plane taints to allow workload scheduling
   hosts: control_plane
