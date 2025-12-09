@@ -1,0 +1,114 @@
+---
+- name: Completely remove node from Kubernetes cluster (including control plane)
+  hosts: "{{ target_node }}"
+  become: true
+  vars:
+    # Kubernetes configuration
+    k8s_reset_command: "kubeadm reset --force --cri-socket unix:///var/run/containerd/containerd.sock"
+    k8s_cleanup_packages:
+      - kubeadm
+      - kubectl
+      - kubelet
+      - kubernetes-cni
+      - containerd
+      - cri-tools
+    k8s_cleanup_directories:
+      - /etc/kubernetes
+      - /var/lib/kubelet
+      - /var/lib/etcd
+      - /var/lib/cni
+      - /etc/cni/net.d
+      - /var/lib/containerd
+      - /run/containerd
+    k8s_cleanup_files:
+      - /etc/containerd/config.toml
+      - /etc/containerd/config.toml.bak
+      - /etc/systemd/system/containerd.service.d
+    k8s_cleanup_services:
+      - kubelet
+      - containerd
+
+  tasks:
+    - name: Check if node is part of the cluster
+      ansible.builtin.command: kubectl get nodes {{ target_node }}
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      register: node_status
+      ignore_errors: true
+      when: groups['control_plane'] | length > 0
+
+    - name: Drain the node (if it's a worker)
+      ansible.builtin.command: kubectl drain {{ target_node }} --ignore-daemonsets --delete-emptydir-data --force
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      when:
+        - "'workers' in group_names"
+        - node_status.rc == 0
+      ignore_errors: true
+
+    - name: Remove node from cluster
+      ansible.builtin.command: kubectl delete node {{ target_node }}
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      when: node_status.rc == 0
+      ignore_errors: true
+
+    - name: Reset kubeadm
+      ansible.builtin.command: "{{ k8s_reset_command }}"
+      register: reset_result
+      changed_when: reset_result.rc == 0
+
+    - name: Remove Kubernetes and container runtime configuration directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ k8s_cleanup_directories }}"
+
+    - name: Remove Kubernetes and container runtime configuration files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ k8s_cleanup_files }}"
+
+    - name: Stop and disable Kubernetes and container runtime services
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop: "{{ k8s_cleanup_services }}"
+
+    - name: Clean up iptables rules
+      ansible.builtin.shell: |
+        iptables -F
+        iptables -t nat -F
+        iptables -t mangle -F
+        iptables -X
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Clean up network interfaces
+      ansible.builtin.shell: |
+        ip link show cni0 >/dev/null 2>&1 && ip link delete cni0 || true
+      args:
+        executable: /bin/bash
+      changed_when: false
+      ignore_errors: true
+
+    - name: Clean up flannel interface (if present)
+      ansible.builtin.shell: |
+        ip link show flannel.1 >/dev/null 2>&1 && ip link delete flannel.1 || true
+      args:
+        executable: /bin/bash
+      changed_when: false
+      ignore_errors: true
+
+    - name: Remove CNI plugins
+      ansible.builtin.file:
+        path: /opt/cni/bin
+        state: absent
+
+    - name: Reboot the node to ensure clean state
+      ansible.builtin.reboot:
+        msg: "Reboot initiated by Ansible for clean node state"
+        connect_timeout: 5
+        reboot_timeout: 600
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
