@@ -65,10 +65,8 @@
 
     - name: Install Flux components
       command: flux install
-      when: flux_bootstrapped.resources | length == 0
+      when: flux_bootstrapped.resources | length == 0 or (flux_bootstrapped.resources[0].status.readyReplicas | default(0) == 0)
       register: flux_install
-      retries: 3
-      delay: 10
       until: flux_install.rc == 0
 
     - name: Wait for Flux deployments to be ready
