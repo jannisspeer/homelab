@@ -20,6 +20,42 @@
           - net-tools
         state: present
 
+    - name: Download Miniconda installer
+      get_url:
+        url: "{{ miniconda_url }}"
+        dest: /tmp/miniconda.sh
+        mode: '0755'
+
+    - name: Install Miniconda
+      command: "bash /tmp/miniconda.sh -b -p {{ miniconda_prefix }}"
+      args:
+        creates: "{{ miniconda_prefix }}/bin/conda"
+
+    - name: Create Ansible conda environment
+      command: "{{ miniconda_prefix }}/bin/conda create -y -n {{ conda_env_name }} python={{ conda_python_version }}"
+      args:
+        creates: "{{ miniconda_prefix }}/envs/{{ conda_env_name }}"
+
+    - name: Install Python tooling for Ansible and Kubernetes
+      pip:
+        executable: "{{ miniconda_prefix }}/envs/{{ conda_env_name }}/bin/pip"
+        name:
+          - pip
+          - setuptools
+          - wheel
+          - kubernetes
+          - openshift
+          - pyyaml
+          - requests
+          - jsonpatch
+          - netaddr
+          - jmespath
+          - urllib3
+          - dnspython
+          - kubernetes-validate
+        state: present
+        extra_args: --upgrade
+
     - name: Disable swap
       shell: |
         swapoff -a
