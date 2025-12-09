@@ -2,6 +2,8 @@
 - name: Prepare all nodes for Kubernetes
   hosts: multiverse
   become: true
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
   tasks:
     - name: Update apt cache
       apt:
@@ -30,6 +32,18 @@
       command: "bash /tmp/miniconda.sh -b -p {{ miniconda_prefix }}"
       args:
         creates: "{{ miniconda_prefix }}/bin/conda"
+
+    - name: Accept conda Terms of Service
+      command: "{{ miniconda_prefix }}/bin/conda tos accept"
+      args:
+        creates: "{{ miniconda_prefix }}/.tos_accepted"
+      failed_when: false
+
+    - name: Mark ToS as accepted
+      file:
+        path: "{{ miniconda_prefix }}/.tos_accepted"
+        state: touch
+        mode: '0644'
 
     - name: Create Ansible conda environment
       command: "{{ miniconda_prefix }}/bin/conda create -y -n {{ conda_env_name }} python={{ conda_python_version }}"
