@@ -93,30 +93,6 @@
       register: flannel_ready
       until: flannel_ready.rc == 0
 
-    - name: Extract certificate key from init output
-      set_fact:
-        certificate_key: "{{ kubeadm_init.stdout | regex_search('--certificate-key ([a-f0-9]{64})', '\\1') | first }}"
-      when: inventory_hostname == groups['control_plane'][0] and kubeadm_init.changed
-
-    - name: Generate join command for control plane nodes
-      shell: kubeadm token create --print-join-command --ttl 2h
-      register: join_command_output
-      when: inventory_hostname == groups['control_plane'][0]
-
-    - name: Save control plane join command to file
-      copy:
-        content: "{{ join_command_output.stdout }} --control-plane --certificate-key {{ certificate_key }}"
-        dest: /tmp/kubeadm_join_cp_command.sh
-        mode: 0755
-      when: inventory_hostname == groups['control_plane'][0] and certificate_key is defined
-
-    - name: Fetch control plane join command to local
-      fetch:
-        src: /tmp/kubeadm_join_cp_command.sh
-        dest: /tmp/kubeadm_join_cp_command.sh
-        flat: true
-      when: inventory_hostname == groups['control_plane'][0] and certificate_key is defined
-
     - name: Create etcd snapshot backup
       shell: |
         export ETCDCTL_API=3
@@ -141,15 +117,24 @@
       changed_when: false
       when: inventory_hostname != groups['control_plane'][0]
 
-    - name: Copy control plane join command to additional nodes
-      copy:
-        src: /tmp/kubeadm_join_cp_command.sh
-        dest: /tmp/kubeadm_join_cp_command.sh
-        mode: 0755
-      when: inventory_hostname != groups['control_plane'][0] and node_in_cluster.rc != 0
+    - name: Generate join command for additional control plane nodes
+      shell: kubeadm token create --print-join-command --ttl 2h
+      register: join_command_output_cp
+      when: inventory_hostname == groups['control_plane'][0]
+
+    - name: Upload certificates for additional control plane nodes
+      shell: kubeadm init phase upload-certs --upload-certs
+      register: upload_certs_output
+      when: inventory_hostname == groups['control_plane'][0]
+
+    - name: Share join data with all hosts
+      set_fact:
+        join_command_cp: "{{ join_command_output_cp.stdout }}"
+        certificate_key_cp: "{{ upload_certs_output.stdout_lines[-1] }}"
+      when: inventory_hostname == groups['control_plane'][0]
 
     - name: Join additional control plane nodes to cluster
-      shell: /tmp/kubeadm_join_cp_command.sh
+      shell: "{{ hostvars[groups['control_plane'][0]].join_command_cp }} --control-plane --certificate-key {{ hostvars[groups['control_plane'][0]].certificate_key_cp }}"
       when: inventory_hostname != groups['control_plane'][0] and node_in_cluster.rc != 0
       register: join_result
       delay: 600
@@ -258,15 +243,18 @@
           --cacert=/etc/kubernetes/pki/etcd/ca.crt \
           --cert=/etc/kubernetes/pki/etcd/server.crt \
           --key=/etc/kubernetes/pki/etcd/server.key \
-          endpoint health
+          endpoint health 2>&1
       become: true
       register: etcd_health
       run_once: true
       ignore_errors: true
+      retries: 3
+      delay: 5
+      until: etcd_health.rc == 0
 
     - name: Display etcd health
       debug:
-        var: etcd_health.stdout_lines
+        msg: "{{ etcd_health.stdout }}"
       run_once: true
       when: etcd_health.rc == 0
 
