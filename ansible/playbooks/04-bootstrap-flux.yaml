@@ -2,7 +2,7 @@
 - name: Bootstrap Flux
   hosts: control_plane[0]
   vars_files:
-    - ../flux_secrets.yaml
+    - ../secrets/flux_secrets.yaml
   environment:
     KUBECONFIG: /home/{{ ansible_user }}/.kube/config
     GITHUB_TOKEN: "{{ flux_github_token }}"
