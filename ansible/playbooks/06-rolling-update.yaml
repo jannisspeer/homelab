@@ -4,7 +4,10 @@
   become: true
   serial: 1
   vars:
-    exclude_pkgs: "kubelet,kubeadm,kubectl"
+    k8s_packages:
+      - kubelet
+      - kubeadm
+      - kubectl
 
   tasks:
     - name: Check if node is part of Kubernetes cluster
@@ -31,6 +34,12 @@
       register: drain_result
       failed_when: drain_result.rc != 0
 
+    - name: Hold Kubernetes packages (prevent version skew)
+      dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop: "{{ k8s_packages }}"
+
     - name: Update apt cache
       apt:
         update_cache: yes
@@ -41,7 +50,6 @@
         upgrade: dist
         autoremove: yes
         autoclean: yes
-        exclude: "{{ exclude_pkgs }}"
       register: apt_upgrade
       retries: 3
       delay: 5
