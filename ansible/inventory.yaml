@@ -4,14 +4,17 @@ multiverse:
       ansible_host: 192.168.194.84
       ansible_user: planeswalker
       ansible_ssh_private_key_file: ~/.ssh/homelab
+      k8s_host: 172.20.20.5
     dominaria:
       ansible_host: 192.168.194.168
       ansible_user: planeswalker
       ansible_ssh_private_key_file: ~/.ssh/homelab
+      k8s_host: 172.20.20.3
     innistrad:
       ansible_host: 192.168.194.174
       ansible_user: planeswalker
       ansible_ssh_private_key_file: ~/.ssh/homelab
+      k8s_host: 172.20.20.4
 
 control_plane:
   hosts:
